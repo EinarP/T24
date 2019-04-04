@@ -1,0 +1,152 @@
+*-----------------------------------------------------------------------------
+* <Rating>31</Rating>
+*-----------------------------------------------------------------------------
+    PROGRAM T24DMP
+*-----------------------------------------------------------------------------
+* Extract T24 application data
+*
+* TODO: Extract local and user fields as well
+*-----------------------------------------------------------------------------
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_F.STANDARD.SELECTION
+
+    ret_msg = ''
+
+    GOSUB parseArguments
+    IF NOT(ret_msg) THEN
+
+        GOSUB openFile
+        IF NOT(ret_msg) THEN
+
+            GOSUB fetchHeader
+
+            CALL EB.READLIST('SSELECT ':file_name, rows, '', n_rows, '')
+
+            FOR r_idx = 1 TO n_rows
+                GOSUB fetchSysFields
+                GOSUB fetchUserFields
+            NEXT r_idx
+
+            GOSUB saveResults
+        END
+    END
+
+    PRINT ret_msg
+
+    STOP
+*-----------------------------------------------------------------------------
+parseArguments:
+
+* File to be dumped
+    file_name = SENTENCE(1)
+    IF NOT(file_name) THEN
+        ret_msg = 'Usage: T24DMP FILE (FULL|NNNN|STRUCT)'
+    END
+
+* TODO: Types STRUCTURE|SAMPLE|FULL
+    type = 'FULL'
+
+* TODO: Perhaps separators should be configurable as well
+    fsep = CHARX(9); vsep = '[vm]'; ssep = '[sm]'
+
+    RETURN
+*-----------------------------------------------------------------------------
+openFile:
+
+    file_p = ''; app_name = ''
+
+* Validate the file name
+    BEGIN CASE
+    CASE file_name[1,2] EQ 'F.'
+        app_name = file_name[3,LEN(file_name)]
+    CASE file_name[1,5] MATCHES 'F3A.'
+        app_name = file_name[6,LEN(file_name)]
+    CASE OTHERWISE
+        ret_msg = file_name:' is not a valid file name'
+    END CASE
+
+* Attempt to open the file
+    IF NOT(ret_msg) THEN
+        CALL CHECK.ROUTINE.EXIST(app_name, routine_exists, ret_info)
+        IF routine_exists THEN
+            OPEN file_name TO file_p ELSE
+                ret_msg = 'File ':file_name:' does not exist'
+            END
+        END ELSE
+            ret_msg = 'Application ':app_name:' does not exist'
+        END
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------
+fetchHeader:
+
+    header = '@ID'
+
+* Fetch field names with multivalue prefixes
+    V$FUNCTION = 'XX'
+    CALL @app_name
+
+* Fetch audit field names
+    CALL GET.STANDARD.SELECTION.DETS(app_name, r_ss)
+
+* Build header row from data and audit field names
+    FOR field_idx = 1 TO C$SYSDIM
+        IF F(field_idx) THEN
+            header<-1> = F(field_idx)
+        END ELSE
+            LOCATE field_idx IN r_ss<SSL.SYS.FIELD.NO,1> SETTING pos THEN
+                IF r_ss<SSL.SYS.SINGLE.MULT,pos> EQ 'M' THEN
+                    header<-1> = 'XX-':r_ss<SSL.SYS.FIELD.NAME,pos>
+                END ELSE
+                    header<-1> = r_ss<SSL.SYS.FIELD.NAME,pos>
+                END
+            END ELSE
+                BREAK
+            END
+        END
+    NEXT field_idx
+
+* Local fields as any other fields
+    FIND 'XX.LOCAL.REF' IN header SETTING local_ref_pos THEN
+        OPEN 'F.LOCAL.REF.TABLE' TO lrt_p THEN
+            READ r_lrt FROM lrt_p,app_name THEN
+                PRINT local_ref_pos
+            END
+        END
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------
+fetchSysFields:
+
+    r_id = rows<r_idx>
+    READ r_app FROM file_p,r_id THEN
+
+        rows<r_idx> := fsep:CHANGE(r_app, @FM, fsep)
+
+        IF local_ref_pos THEN
+
+        END
+
+        rows<r_idx> = CHANGE(CHANGE(rows<r_idx>,  @VM, vsep), @SM, ssep)
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------
+fetchUserFields:
+
+    RETURN
+*-----------------------------------------------------------------------------
+saveResults:
+
+    OPEN '&SAVEDLISTS&' TO dir_p THEN
+        outp_file = 'TAD_':file_name:'.txt'
+        WRITE CHANGE(header, @FM, fsep):@FM:rows TO dir_p,outp_file 
+        ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file
+    END ELSE 
+        ret_msg = 'Cannot create the output file'
+    END
+
+    RETURN
