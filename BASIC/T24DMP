@@ -3,31 +3,35 @@
 *-----------------------------------------------------------------------------
     PROGRAM T24DMP
 *-----------------------------------------------------------------------------
-* Extract T24 application data
+* Extracts T24 file contents with a perfect header and sample of records
 *
-* TODO: Extract local and user fields as well
+* TODO: Extract user fields as well
+* TODO: Limit sample size
 *-----------------------------------------------------------------------------
     $INSERT I_COMMON
     $INSERT I_EQUATE
     $INSERT I_F.STANDARD.SELECTION
+    $INSERT I_F.LOCAL.REF.TABLE
+    $INSERT I_F.LOCAL.TABLE
 
     ret_msg = ''
 
     GOSUB parseArguments
     IF NOT(ret_msg) THEN
 
-        GOSUB openFile
+        GOSUB openFiles
         IF NOT(ret_msg) THEN
 
+            header = '@ID'
+            local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
             GOSUB fetchHeader
 
             CALL EB.READLIST('SSELECT ':file_name, rows, '', n_rows, '')
-
             FOR r_idx = 1 TO n_rows
-                GOSUB fetchSysFields
-                GOSUB fetchUserFields
+                GOSUB fetchRow
             NEXT r_idx
 
+            outp = CHANGE(header, @FM, fsep):@FM:rows
             GOSUB saveResults
         END
     END
@@ -38,21 +42,24 @@
 *-----------------------------------------------------------------------------
 parseArguments:
 
-* File to be dumped
+* File to be dumped (with company prefix)
     file_name = SENTENCE(1)
     IF NOT(file_name) THEN
-        ret_msg = 'Usage: T24DMP FILE (FULL|NNNN|STRUCT)'
+        ret_msg = 'Usage: T24DMP FILE (SAMPLE_SIZE)'
     END
 
-* TODO: Types STRUCTURE|SAMPLE|FULL
-    type = 'FULL'
+* Number of records to dump (all if not specified)
+    sample_size = SENTENCE(2)
+    IF NOT(sample_size) THEN
+        sample_size = 'FULL'
+    END
 
 * TODO: Perhaps separators should be configurable as well
     fsep = CHARX(9); vsep = '[vm]'; ssep = '[sm]'
 
     RETURN
 *-----------------------------------------------------------------------------
-openFile:
+openFiles:
 
     file_p = ''; app_name = ''
 
@@ -66,11 +73,15 @@ openFile:
         ret_msg = file_name:' is not a valid file name'
     END CASE
 
-* Attempt to open the file
+* Attempt to open the file to be dumped and related files
     IF NOT(ret_msg) THEN
         CALL CHECK.ROUTINE.EXIST(app_name, routine_exists, ret_info)
         IF routine_exists THEN
-            OPEN file_name TO file_p ELSE
+            OPEN file_name TO file_p THEN
+                OPEN 'F.LOCAL.REF.TABLE' TO lrt_p ELSE STOP
+                OPEN 'F.LOCAL.TABLE' TO lt_p ELSE STOP
+                OPEN '&SAVEDLISTS&' TO sl_p ELSE STOP
+            END ELSE
                 ret_msg = 'File ':file_name:' does not exist'
             END
         END ELSE
@@ -82,19 +93,23 @@ openFile:
 *-----------------------------------------------------------------------------
 fetchHeader:
 
-    header = '@ID'
+* Field names and audit field multivalue prefixes from STANDARD.SELECTION
+    CALL GET.STANDARD.SELECTION.DETS(app_name, r_ss)
+    n_usr_field = DCOUNT(r_ss<SSL.USR.FIELD.NAME>,@VM)
 
-* Fetch field names with multivalue prefixes
+* System field multivalue prefixes from application (F array)
     V$FUNCTION = 'XX'
     CALL @app_name
 
-* Fetch audit field names
-    CALL GET.STANDARD.SELECTION.DETS(app_name, r_ss)
-
-* Build header row from data and audit field names
+* Fetch system data and audit field names
     FOR field_idx = 1 TO C$SYSDIM
         IF F(field_idx) THEN
-            header<-1> = F(field_idx)
+            IF F(field_idx) NE 'XX.LOCAL.REF' THEN
+                header<-1> = F(field_idx)
+            END ELSE
+                local_ref_pos = field_idx
+                GOSUB fetchHeaderLocalRef
+            END
         END ELSE
             LOCATE field_idx IN r_ss<SSL.SYS.FIELD.NO,1> SETTING pos THEN
                 IF r_ss<SSL.SYS.SINGLE.MULT,pos> EQ 'M' THEN
@@ -103,50 +118,80 @@ fetchHeader:
                     header<-1> = r_ss<SSL.SYS.FIELD.NAME,pos>
                 END
             END ELSE
+                usr_field_pos = field_idx
                 BREAK
             END
         END
     NEXT field_idx
 
-* Local fields as any other fields
-    FIND 'XX.LOCAL.REF' IN header SETTING local_ref_pos THEN
-        OPEN 'F.LOCAL.REF.TABLE' TO lrt_p THEN
-            READ r_lrt FROM lrt_p,app_name THEN
-                PRINT local_ref_pos
+* Add local reference fields (STANDARD.SELECTION not reliable)
+    READ r_lrt FROM lrt_p,app_name THEN
+        n_local_ref = DCOUNT(r_lrt<EB.LRT.LOCAL.TABLE.NO>, @VM)
+        FOR i = 1 TO n_local_ref
+            READ r_lt FROM lt_p,r_lrt<EB.LRT.LOCAL.TABLE.NO,i> THEN
+                header<-1> = r_lrt<EB.LRT.SUB.ASSOC.CODE,i>:'L_':r_lt<EB.LTA.SHORT.NAME>
             END
-        END
+        NEXT i
     END
+
+* Add user fields
+    FOR i = 1 TO n_usr_field
+        IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
+            header<-1> = r_ss<SSL.USR.TYPE,i>:'_':r_ss<SSL.USR.FIELD.NAME,i>
+        END
+    NEXT i
+
+    RETURN
+
+fetchHeaderLocalRef:
+
+    n_local_ref = DCOUNT(r_lrt<EB.LRT.LOCAL.TABLE.NO>, @VM)
+    FOR i = 1 TO n_local_ref
+        FIND 'LOCAL.REF<1,':i:'>' IN r_ss<SSL.USR.FIELD.NO> SETTING fpos,vpos,spos THEN
+            header<-1> = r_lrt<EB.LRT.SUB.ASSOC.CODE,i>:'L_':r_ss<SSL.USR.FIELD.NAME,vpos>
+        END
+    NEXT i
 
     RETURN
 *-----------------------------------------------------------------------------
-fetchSysFields:
+fetchRow:
 
     r_id = rows<r_idx>
+
+* Fetch system and local (may be always fully populated) fields
     READ r_app FROM file_p,r_id THEN
 
-        rows<r_idx> := fsep:CHANGE(r_app, @FM, fsep)
-
         IF local_ref_pos THEN
-
+            local_ref_vals = ''
+            FOR i = 1 TO n_local_ref
+                local_ref_vals<i> = r_app<local_ref_pos,i>
+            NEXT i
+            r_app<local_ref_pos> = local_ref_vals
         END
 
-        rows<r_idx> = CHANGE(CHANGE(rows<r_idx>,  @VM, vsep), @SM, ssep)
+        row = r_id:@FM:r_app
     END
 
-    RETURN
-*-----------------------------------------------------------------------------
-fetchUserFields:
+* Fetch local ref fields
+    FOR i = 1 TO n_local_ref
+        row<-1> = r_app<local_ref_pos,i>
+    NEXT i
+
+* Fetch user fields (call IDESC)
+    FOR f_idx = 1 TO n_usr_field
+        IF LEFT(r_ss<SSL.USR.FIELD.NO,f_idx>,10) NE 'LOCAL.REF<' THEN
+            row<-1> = 'IDESC'
+        END
+    NEXT f_idx
+
+    rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, vsep), @SM, ssep)
 
     RETURN
 *-----------------------------------------------------------------------------
 saveResults:
 
-    OPEN '&SAVEDLISTS&' TO dir_p THEN
-        outp_file = 'TAD_':file_name:'.txt'
-        WRITE CHANGE(header, @FM, fsep):@FM:rows TO dir_p,outp_file 
-        ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file
-    END ELSE 
-        ret_msg = 'Cannot create the output file'
-    END
+    outp_file = 'TAD_':file_name:'.txt'
+    WRITE outp TO sl_p,outp_file
+    ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file
 
     RETURN
