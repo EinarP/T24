@@ -102,27 +102,26 @@ fetchHeader:
     CALL @app_name
 
 * Fetch system data and audit field names
-    FOR field_idx = 1 TO C$SYSDIM
-        IF F(field_idx) THEN
-            IF F(field_idx) NE 'XX.LOCAL.REF' THEN
-                header<-1> = F(field_idx)
+    FOR i = 1 TO C$SYSDIM
+        IF F(i) THEN
+            IF F(i) NE 'XX.LOCAL.REF' THEN
+                header<-1> = F(i)
             END ELSE
-                local_ref_pos = field_idx
-                GOSUB fetchHeaderLocalRef
-            END
+                local_ref_pos = i
+             END
         END ELSE
-            LOCATE field_idx IN r_ss<SSL.SYS.FIELD.NO,1> SETTING pos THEN
+            LOCATE i IN r_ss<SSL.SYS.FIELD.NO,1> SETTING pos THEN
                 IF r_ss<SSL.SYS.SINGLE.MULT,pos> EQ 'M' THEN
                     header<-1> = 'XX-':r_ss<SSL.SYS.FIELD.NAME,pos>
                 END ELSE
                     header<-1> = r_ss<SSL.SYS.FIELD.NAME,pos>
                 END
             END ELSE
-                usr_field_pos = field_idx
+                usr_field_pos = i
                 BREAK
             END
         END
-    NEXT field_idx
+    NEXT i
 
 * Add local reference fields (STANDARD.SELECTION not reliable)
     READ r_lrt FROM lrt_p,app_name THEN
@@ -142,47 +141,31 @@ fetchHeader:
     NEXT i
 
     RETURN
-
-fetchHeaderLocalRef:
-
-    n_local_ref = DCOUNT(r_lrt<EB.LRT.LOCAL.TABLE.NO>, @VM)
-    FOR i = 1 TO n_local_ref
-        FIND 'LOCAL.REF<1,':i:'>' IN r_ss<SSL.USR.FIELD.NO> SETTING fpos,vpos,spos THEN
-            header<-1> = r_lrt<EB.LRT.SUB.ASSOC.CODE,i>:'L_':r_ss<SSL.USR.FIELD.NAME,vpos>
-        END
-    NEXT i
-
-    RETURN
 *-----------------------------------------------------------------------------
 fetchRow:
 
     r_id = rows<r_idx>
 
-* Fetch system and local (may be always fully populated) fields
+* Fetch system fields
     READ r_app FROM file_p,r_id THEN
-
-        IF local_ref_pos THEN
-            local_ref_vals = ''
-            FOR i = 1 TO n_local_ref
-                local_ref_vals<i> = r_app<local_ref_pos,i>
-            NEXT i
-            r_app<local_ref_pos> = local_ref_vals
-        END
-
         row = r_id:@FM:r_app
     END
 
 * Fetch local ref fields
-    FOR i = 1 TO n_local_ref
-        row<-1> = r_app<local_ref_pos,i>
-    NEXT i
+	IF local_ref_pos THEN
+		FOR i = 1 TO n_local_ref
+			row<usr_field_pos+i-1> = r_app<local_ref_pos,i>
+		NEXT i
+		
+		DEL row<local_ref_pos+1>
+	END
 
 * Fetch user fields (call IDESC)
-    FOR f_idx = 1 TO n_usr_field
-        IF LEFT(r_ss<SSL.USR.FIELD.NO,f_idx>,10) NE 'LOCAL.REF<' THEN
-            row<-1> = 'IDESC'
+    FOR i = 1 TO n_usr_field
+        IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
+            row<usr_field_pos+n_local_ref+i-1> = 'IDESC'
         END
-    NEXT f_idx
+    NEXT i
 
     rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, vsep), @SM, ssep)
 
