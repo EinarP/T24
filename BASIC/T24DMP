@@ -1,11 +1,9 @@
 *-----------------------------------------------------------------------------
-* <Rating>585</Rating>
+* <Rating>574</Rating>
 *-----------------------------------------------------------------------------
     PROGRAM T24DMP
 *-----------------------------------------------------------------------------
-* Extracts T24 file contents with a perfect header and sample of records
-*
-* TODO: Limit sample size
+* Extracts T24 file contents with local and user fields
 *-----------------------------------------------------------------------------
     $INSERT I_COMMON
     $INSERT I_EQUATE
@@ -25,7 +23,8 @@
             local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
             GOSUB fetchHeader
 
-            CALL EB.READLIST('SSELECT ':file_name, rows, '', n_rows, '')
+            rows = ''
+            GOSUB selectRecords
             FOR r_idx = 1 TO n_rows
                 GOSUB fetchRow
             NEXT r_idx
@@ -49,9 +48,6 @@ parseArguments:
 
 * Number of records to dump (all if not specified)
     sample_size = SENTENCE(2)
-    IF NOT(sample_size) THEN
-        sample_size = 'FULL'
-    END
 
 * TODO: Perhaps separators should be configurable as well
     fsep = CHARX(9); vsep = '{v}'; ssep = '{s}'
@@ -89,6 +85,18 @@ openFiles:
         END ELSE
             ret_msg = 'Application ':app_name:' does not exist'
         END
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------
+selectRecords:
+
+* TODO: Randomise sample (additionally?)
+
+    CALL EB.READLIST('SSELECT ':file_name, rows, '', n_rows, '')
+    IF sample_size AND sample_size LT n_rows THEN
+        rows = rows[@FM,1,sample_size]
+        n_rows = sample_size
     END
 
     RETURN
@@ -167,10 +175,12 @@ fetchRow:
     END
 
 * Fetch user fields
+    usr_field_idx = 0
     FOR i = 1 TO n_usr_field
         IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
             CALL IDESC(file_name, r_id, r_app, r_ss<SSL.USR.FIELD.NAME,i>, idesc_val)
-            row<usr_field_pos+n_local_ref+i-2> = idesc_val
+            row<usr_field_pos+n_local_ref+usr_field_idx> = idesc_val
+            usr_field_idx++
         END
     NEXT i
 
@@ -183,6 +193,6 @@ saveResult:
 
     outp_file = 'TAD_':file_name:'.txt'
     WRITE result TO sl_p,outp_file
-    ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file
+    ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file:' (':n_rows:' records)'
 
     RETURN
