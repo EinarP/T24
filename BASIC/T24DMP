@@ -1,5 +1,5 @@
 *-----------------------------------------------------------------------------
-* <Rating>816</Rating>
+* <Rating>516</Rating>
 *-----------------------------------------------------------------------------
     PROGRAM T24DMP
 *-----------------------------------------------------------------------------
@@ -17,6 +17,7 @@
     GOSUB parseArguments
     IF ret_msg THEN GOSUB errorHandler
 
+    file_p = ''; app_name = ''
     GOSUB openFiles
     IF ret_msg THEN GOSUB errorHandler
 
@@ -66,8 +67,6 @@ parseArguments:
 *-----------------------------------------------------------------------------
 openFiles:
 
-    file_p = ''; app_name = ''
-
 * Validate the file name
     BEGIN CASE
     CASE file_name[1,2] EQ 'F.'
@@ -85,9 +84,6 @@ openFiles:
         CALL CHECK.ROUTINE.EXIST(app_name, routine_exists, ret_info)
         IF routine_exists THEN
             OPEN file_name TO file_p THEN
-                OPEN 'F.LOCAL.REF.TABLE' TO lrt_p ELSE STOP
-                OPEN 'F.LOCAL.TABLE' TO lt_p ELSE STOP
-                OPEN '&SAVEDLISTS&' TO sl_p ELSE STOP
                 CALL LOAD.COMPANY(company)
             END ELSE
                 ret_msg = 'File ':file_name:' does not exist'
@@ -103,7 +99,7 @@ selectRecords:
 
     CALL EB.READLIST('SSELECT ':file_name, rows, '', n_rows, '')
 
-* Subset the output if requested
+* Subset to tail, random, or head (default) records if requested
     IF sample_size AND sample_size LT n_rows THEN
         BEGIN CASE
         CASE sample_type EQ 'T'
@@ -143,17 +139,22 @@ fetchHeader:
             header<-1> = F(f_idx)
 
         CASE F(f_idx) EQ 'XX.LOCAL.REF'
-            local_ref_pos = f_idx
-            READ r_lrt FROM lrt_p,app_name THEN
-                n_local_ref = DCOUNT(r_lrt<EB.LRT.LOCAL.TABLE.NO>, @VM)
-                FOR i = 1 TO n_local_ref
-                    READ r_lt FROM lt_p,r_lrt<EB.LRT.LOCAL.TABLE.NO,i> THEN
-                        header<-1> = r_lrt<EB.LRT.SUB.ASSOC.CODE,i>:'L_':r_lt<EB.LTA.SHORT.NAME>
+            OPEN 'F.LOCAL.REF.TABLE' TO lrt_p THEN
+                READ r_lrt FROM lrt_p,app_name THEN
+                    OPEN 'F.LOCAL.TABLE' TO lt_p THEN
+                        n_local_ref = DCOUNT(r_lrt<EB.LRT.LOCAL.TABLE.NO>, @VM)
+                        FOR i = 1 TO n_local_ref
+                            READ r_lt FROM lt_p,r_lrt<EB.LRT.LOCAL.TABLE.NO,i> THEN
+                                sac = r_lrt<EB.LRT.SUB.ASSOC.CODE,i>
+                                header<-1> = sac:'L_':r_lt<EB.LTA.SHORT.NAME>
+                            END
+                        NEXT i
                     END
-                NEXT i
-            END ELSE
-                header<-1> = 'XX.LOCAL.REF'
+                END ELSE
+                    header<-1> = 'XX.LOCAL.REF'
+                END
             END
+            local_ref_pos = f_idx
 
         CASE OTHERWISE
             LOCATE f_idx IN r_ss<SSL.SYS.FIELD.NO,1> SETTING pos THEN
@@ -213,8 +214,13 @@ fetchRow:
 *-----------------------------------------------------------------------------
 saveResult:
 
-    outp_file = 'TAD_':file_name:'.txt'
-    WRITE result TO sl_p,outp_file
-    ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file:' (':n_rows:' records)'
+    OPEN '&SAVEDLISTS&' TO sl_p THEN
+        outp_file = 'TAD_':file_name:'.txt'
+        WRITE result TO sl_p,outp_file
+        ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file:' (':n_rows:' records)'
+
+    END ELSE
+        ret_msg = 'Unable to output into &SAVEDLISTS&'
+    END
 
     RETURN
