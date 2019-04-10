@@ -1,5 +1,5 @@
 *-----------------------------------------------------------------------------
-* <Rating>574</Rating>
+* <Rating>816</Rating>
 *-----------------------------------------------------------------------------
     PROGRAM T24DMP
 *-----------------------------------------------------------------------------
@@ -13,26 +13,27 @@
 
     ret_msg = ''
 
+    file_name = SENTENCE(1); sample_size = SENTENCE(2); sample_type = ''
     GOSUB parseArguments
-    IF NOT(ret_msg) THEN
+    IF ret_msg THEN GOSUB errorHandler
 
-        GOSUB openFiles
-        IF NOT(ret_msg) THEN
+    GOSUB openFiles
+    IF ret_msg THEN GOSUB errorHandler
 
-            header = '@ID'
-            local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
-            GOSUB fetchHeader
+    header = '@ID'
+    local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
+    GOSUB fetchHeader
 
-            rows = ''
-            GOSUB selectRecords
-            FOR r_idx = 1 TO n_rows
-                GOSUB fetchRow
-            NEXT r_idx
+    rows = ''
+    GOSUB selectRecords
+    FOR r_idx = 1 TO n_rows
+        GOSUB fetchRow
+    NEXT r_idx
 
-            result = CHANGE(header, @FM, fsep):@FM:rows
-            GOSUB saveResult
-        END
-    END
+    result = CHANGE(header, @FM, fsep):@FM:rows
+    GOSUB saveResult
+
+errorHandler:
 
     PRINT ret_msg
 
@@ -40,14 +41,23 @@
 *-----------------------------------------------------------------------------
 parseArguments:
 
-* File to be dumped (with company prefix)
-    file_name = SENTENCE(1)
+* File to be dumped (with company prefix) mandatory
     IF NOT(file_name) THEN
-        ret_msg = 'Usage: T24DMP FILE (SAMPLE_SIZE)'
+        ret_msg = 'Usage: T24DMP FILE ((H|T|R)SAMPLE_SIZE)'
     END
 
-* Number of records to dump (all if not specified)
-    sample_size = SENTENCE(2)
+* Number of records to dump (all if not specified) and how
+    IF sample_size AND NOT(sample_size*1) THEN
+        sample_type = sample_size[1,1]
+        IF sample_type MATCHES 'H':@VM:'T':@VM:'R' THEN
+            sample_size = sample_size[2,LEN(sample_size)-1]
+            IF NOT(sample_size*1) THEN
+                ret_msg = 'Sample size must be numeric'
+            END
+        END ELSE
+            ret_msg = 'Unknown sample type prefix'
+        END
+    END
 
 * TODO: Perhaps separators should be configurable as well
     fsep = CHARX(9); vsep = '{v}'; ssep = '{s}'
@@ -91,11 +101,26 @@ openFiles:
 *-----------------------------------------------------------------------------
 selectRecords:
 
-* TODO: Randomise sample (additionally?)
-
     CALL EB.READLIST('SSELECT ':file_name, rows, '', n_rows, '')
+
+* Subset the output if requested
     IF sample_size AND sample_size LT n_rows THEN
-        rows = rows[@FM,1,sample_size]
+        BEGIN CASE
+        CASE sample_type EQ 'T'
+            rows = rows[@FM,n_rows-sample_size,sample_size]
+
+        CASE sample_type EQ 'R'
+            random_rows = ''
+            FOR i = 1 TO sample_size
+                LOOP r_id = RND(n_rows) + 1 WHILE r_id MATCHES LOWER(random_rows) REPEAT
+                random_rows<i> = rows<r_id>
+            NEXT i
+            rows = random_rows
+
+        CASE OTHERWISE
+            rows = rows[@FM,1,sample_size]
+        END CASE
+
         n_rows = sample_size
     END
 
@@ -103,22 +128,20 @@ selectRecords:
 *-----------------------------------------------------------------------------
 fetchHeader:
 
-* Field names and audit field multivalue prefixes from STANDARD.SELECTION
-    CALL GET.STANDARD.SELECTION.DETS(app_name, r_ss)
-    n_usr_field = DCOUNT(r_ss<SSL.USR.FIELD.NAME>,@VM)
-
-* System field multivalue prefixes from application (F array)
+* System field names with multivalue prefixes from application (F array)
     V$FUNCTION = 'XX'
     CALL @app_name
 
+* Audit and user field names with multivalue prefixes from STANDARD.SELECTION
+    CALL GET.STANDARD.SELECTION.DETS(app_name, r_ss)
+    n_usr_field = DCOUNT(r_ss<SSL.USR.FIELD.NAME>,@VM)
+
+* Fetch system, local, and audit field names respectively
     FOR f_idx = 1 TO C$SYSDIM
         BEGIN CASE
-
-* Fetch system field names
         CASE F(f_idx) AND F(f_idx) NE 'XX.LOCAL.REF'
             header<-1> = F(f_idx)
 
-* Fetch local reference field names (STANDARD.SELECTION not reliable)
         CASE F(f_idx) EQ 'XX.LOCAL.REF'
             local_ref_pos = f_idx
             READ r_lrt FROM lrt_p,app_name THEN
@@ -132,7 +155,6 @@ fetchHeader:
                 header<-1> = 'XX.LOCAL.REF'
             END
 
-* Fetch audit field names
         CASE OTHERWISE
             LOCATE f_idx IN r_ss<SSL.SYS.FIELD.NO,1> SETTING pos THEN
                 IF r_ss<SSL.SYS.SINGLE.MULT,pos> EQ 'M' THEN
