@@ -218,7 +218,6 @@ saveResult:
         outp_file = 'TAD_':file_name:'.txt'
         WRITE result TO sl_p,outp_file
         ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file:' (':n_rows:' records)'
-
     END ELSE
         ret_msg = 'Unable to output into &SAVEDLISTS&'
     END

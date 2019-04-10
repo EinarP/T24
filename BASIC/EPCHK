@@ -1,0 +1,343 @@
+*------------------------------------------------------------------------------
+* <Rating>971</Rating>
+*
+* TODO: Convert from SUBROUTINE to PROGRAM (company handling...)
+*------------------------------------------------------------------------------
+    SUBROUTINE EPCHK
+*------------------------------------------------------------------------------
+* Output file in &HOLD& for results
+    outf = 't24mb.csv'
+* Local development prefixes array
+    ldev = ''
+* Checkpoint to be recorded
+    ckpt = 'baseline'
+* What are we going to do
+    doStructureExtraction = 0
+    doDataSummary = 0
+    doLinkScan = 0
+    doValueExtraction = 1
+* Table for link scanning and value extractionRecord to be scanned [FILE:@ID]
+    IF doLinkScan OR doValueExtraction THEN
+        svt = 'LD.LOANS.AND.DEPOSITS':@VM:'LD1000598675'
+        svt<-1> = 'LD.LOANS.AND.DEPOSITS':@VM:'LD1000505548'
+        svt<-1> = 'LD.LOANS.AND.DEPOSITS':@VM:'LD1000553495'
+        svt<-1> = 'AA.ARRANGEMENT':@VM:'AA10005FX65G'
+        svt<-1> = 'AA.ARRANGEMENT':@VM:'AA10005DY3B5'
+        svt<-1> = 'AA.ARRANGEMENT':@VM:'AA10005S6NPJ'
+        svtCount = DCOUNT(svt, @FM)
+    END
+* Sample size
+    maxSampleSize = 30
+*------------------------------------------------------------------------------
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_F.STANDARD.SELECTION
+    $INSERT I_F.COMPANY
+
+    GOSUB INITIALISE
+
+    GOSUB SELECT.SS.RECS
+    FOR app_idx = 1 TO ssCount
+
+        curApp = ssList<app_idx>
+        GOSUB OPEN.APP.FILE
+        IF ERR THEN CONTINUE
+
+        IF doStructureExtraction THEN
+            GOSUB GET.MEMBERSHIP
+            GOSUB GET.APP.SUMMARY
+        END
+
+        IF doDataSummary OR doLinkScan THEN
+            GOSUB SELECT.APP.RECS
+            IF recCount THEN
+                IF doDataSummary THEN
+                    GOSUB GET.DATA.SUMMARY
+                END
+                IF doLinkScan THEN
+                    GOSUB DO.LINK.SCAN
+                END
+            END
+        END
+
+        IF doValueExtraction THEN
+            GOSUB DO.VALUE.EXTRACTION
+        END
+
+        CLOSE F.APP
+    NEXT app_idx
+
+    GOSUB FINALISE
+
+    RETURN
+*-------------------------------------------------------------------------------
+INITIALISE:
+
+    startTime = TIME()
+
+    FN.SS = 'F.STANDARD.SELECTION'
+    CALL OPF(FN.SS, F.SS)
+
+    selc = 'SELECT F.FILE.CONTROL'
+    CALL EB.READLIST(selc, fileControlList, '', fileControlCount, '')
+
+    sels = "@ID:'|':PRODUCT"
+    selc = 'SELECT F.PGM.FILE SAVING EVAL "':sels:'"'
+    CALL EB.READLIST(selc, pgmFileList, '', pgmFileCount, '')
+    pgmFileList = CHANGE(pgmFileList, '|', @VM)
+
+    outp = ''
+    otail = ',':ckpt:','
+
+    RETURN
+*-------------------------------------------------------------------------------
+SELECT.SS.RECS:
+
+    ssList = ''
+
+    IF doStructureExtraction OR doDataSummary OR doLinkScan THEN
+        selc = 'SELECT F.STANDARD.SELECTION WITH @ID UNLIKE NOFILE...'
+        CALL EB.READLIST(selc, ssList, '', ssCount, '')
+    END ELSE
+        FOR svt_idx = 1 TO svtCount
+            curApp = svt<svt_idx,1>
+            FIND curApp IN ssList SETTING pos ELSE
+                ssList<-1> = curApp
+            END
+        NEXT svt_idx
+        ssCount = DCOUNT(ssList, @FM)
+    END
+
+    RETURN
+*-------------------------------------------------------------------------------
+OPEN.APP.FILE:
+
+    ERR = ''
+
+* Attempt to open file
+    FN.APP = 'F.':curApp
+    OPEN '',FN.APP TO F.APP ELSE
+        FN.APP = 'F':R.COMPANY(EB.COM.MNEMONIC):'.':curApp
+        OPEN '',FN.APP TO F.APP ELSE
+            ERR = 'ERR_FILE_OPEN_FAILURE'
+            GOTO ERR.HANDLER
+        END
+    END
+
+* Field names from SS
+    fieldList = ''
+    linkList = ''
+
+    CALL F.READ(FN.SS, ssList<app_idx>, R.SS, F.SS, '')
+
+    prevFieldNo = -1
+    sysFieldCount = DCOUNT(R.SS<SSL.SYS.FIELD.NAME>, @VM)
+    FOR ss_idx = 1 TO sysFieldCount
+
+        curFieldName = R.SS<SSL.SYS.FIELD.NAME,ss_idx>
+
+        BEGIN CASE
+        CASE R.SS<SSL.SYS.FIELD.NO,ss_idx> EQ prevFieldNo
+            CONTINUE
+        CASE R.SS<SSL.SYS.TYPE,ss_idx> NE 'D'
+            CONTINUE
+        CASE FIELD(curFieldName, 'RESERVE', 2, 1)
+            CONTINUE
+        CASE OTHERWISE
+            fieldList<-1> = curFieldName:@VM:R.SS<SSL.SYS.FIELD.NO,ss_idx>
+            prevFieldNo = R.SS<SSL.SYS.FIELD.NO,ss_idx>
+
+            relFile = R.SS<SSL.SYS.REL.FILE,ss_idx>
+            IF relFile THEN
+                curLink = curApp:'>':curFieldName:'|':relFile
+                linkList<-1> = curLink:',type,defined':otail
+            END ELSE
+* TODO: If not data wt needed outl := ',attribute,':R.SS<SSL.SYS.FIELD.NAME,j>
+            END
+        END CASE
+    NEXT ss_idx
+
+    fieldCount = DCOUNT(fieldList, @FM)
+
+    RETURN
+*-------------------------------------------------------------------------------
+GET.MEMBERSHIP:
+* TODO: Local and core dev membership separation
+
+* Modularization of the system
+    FIND curApp IN pgmFileList SETTING fpos,vpos THEN
+        curm = pgmFileList<fpos,2>
+        IF NOT(curm) THEN
+            curm = 'ERR_NO_PRODUCT_IN_PGM.FILE'
+        END
+        outp<-1> = curApp:',mbrp,':curm:otail
+    END ELSE
+        ERR = 'ERR_NOT_IN_PGM.FILE'
+        GOTO ERR.HANDLER
+    END
+
+* TODO: Division to core and local development
+
+    RETURN
+*-------------------------------------------------------------------------------
+GET.APP.SUMMARY:
+
+    IF linkList THEN outp<-1> = linkList
+    outp<-1> = curApp:',wt_numattr,':fieldCount:otail
+
+    RETURN
+*-------------------------------------------------------------------------------
+SELECT.APP.RECS:
+
+    recCount = 0
+
+    FIND curApp IN fileControlList SETTING fpos THEN
+        CALL EB.READLIST('SELECT ':FN.APP, recList, '', recCount, '')
+    END ELSE
+        ERR = 'ERR_NOT_IN_FILE.CONTROL'
+        GOTO ERR.HANDLER
+    END
+
+* Sample without replacement if more than maxSampleSize records
+    IF doLinkScan OR recCount LE maxSampleSize THEN
+        sampleCount = recCount
+        sampleList = recList
+    END ELSE
+        sampleCount = maxSampleSize
+
+        rkList = ''
+        FOR rec_idx = 1 TO sampleCount
+            LOOP rid = RND(recCount) + 1 WHILE rid MATCHES LOWER(rkList) REPEAT
+            sampleList<rec_idx> = recList<rid>
+            rkList<-1> = rid
+        NEXT rec_idx
+    END
+
+    RETURN
+*-------------------------------------------------------------------------------
+GET.DATA.SUMMARY:
+
+    outp<-1> = curApp:',wt_numrec,':recCount:otail
+
+* Extract field data
+    volList = '' ; fillList = ''
+    FOR rec_idx = 1 TO sampleCount
+        CALL F.READ(FN.APP, sampleList<rec_idx>, R.APP, F.APP, '')
+        R.APP = sampleList<rec_idx>:@FM:R.APP
+        FOR fld_idx = 1 TO fieldCount
+            volList<fld_idx> += LEN(R.APP<fieldList<fld_idx,2>+1>)
+            fillList<fld_idx> += (R.APP<fieldList<fld_idx,2>+1> NE '')
+        NEXT fld_idx
+    NEXT rec_idx
+
+* TODO: volrec and volattr seem to fit into one vol column?
+
+* Field averages
+    volrec = 0 ; fillrec = 0
+    FOR fld_idx = 1 TO fieldCount
+        curAttr = curApp:'>':fieldList<fld_idx,1>
+        IF volList<fld_idx> THEN
+            volrec += volList<fld_idx>/sampleCount
+            volList<fld_idx> = DROUND(volList<fld_idx>/sampleCount, 2)
+        END
+        outp<-1> = curAttr:',wt_volattr,':volList<fld_idx>:otail
+
+        IF fillList<fld_idx> THEN
+            fillrec += fillList<fld_idx>/sampleCount
+            fillList<fld_idx> = DROUND(fillList<fld_idx>/sampleCount, 2)
+        END
+        outp<-1> = curAttr:',wt_fillattr,':fillList<fld_idx>:otail
+    NEXT fld_idx
+
+* Record averages
+    outp<-1> = curApp:',wt_volrec,':DROUND(volrec, 2):otail
+    outp<-1> = curApp:',wt_fillrec,':DROUND(fillrec, 2):otail
+
+    RETURN
+*-------------------------------------------------------------------------------
+DO.LINK.SCAN:
+* TODO: Scan for a particular expression (contract). Can be limited to id or module
+* TODO: Aggregate to link weights?
+
+    FOR rec_idx = 1 TO recCount
+
+        APP.ID = recList<rec_idx>
+        CALL F.READ(FN.APP, APP.ID, R.APP, F.APP, '')
+
+        R.APP = APP.ID:@FM:R.APP
+        FOR svt_idx = 1 TO svtCount
+            cursc = RAISE(svt<svt_idx>)
+            FINDSTR cursc<2> IN R.APP SETTING fpos THEN
+                fieldNumber = fpos - 1
+                FIND fieldNumber IN fieldList SETTING fpos,vpos THEN
+* TODO: Fix reference to itself
+                    curFieldName = fieldList<fpos,1>
+                    opv = curApp:'>':curFieldName:'|':cursc<1>:',type,scanned'
+                    instance = curApp:'>':APP.ID:'>':curFieldName
+                    GOSUB outputLine
+                END ELSE
+                    ERR = 'ERR_FIELD_NOT_FOUND'
+                    GOTO ERR.HANDLER
+                END
+            END
+        NEXT svt_idx
+    NEXT rec_idx
+
+    RETURN
+*-------------------------------------------------------------------------------
+DO.VALUE.EXTRACTION:
+
+    FOR svt_idx = 1 TO svtCount
+        IF svt<svt_idx,1> EQ curApp THEN
+            APP.ID = svt<svt_idx,2>
+            CALL F.READ(FN.APP, APP.ID, R.APP, F.APP, '')
+            IF R.APP THEN
+                FOR fld_idx = 1 TO fieldCount
+                    FIND fld_idx IN fieldList SETTING fpos,vpos THEN
+                        curFieldName = fieldList<fpos,1>
+                        opv = curApp:'>':curFieldName:',value,':R.APP<fld_idx>
+                        instance = curApp:'>':APP.ID:'>':curFieldName
+                        GOSUB outputLine
+                    END
+                NEXT fld_idx
+            END
+        END
+    NEXT svt_idx
+
+    RETURN
+*-------------------------------------------------------------------------------
+outputLine:
+
+    tmpoutp = opv:',':ckpt:',':instance
+    outp<-1> = CHANGE(CHANGE(tmpoutp, @SM, '|'), @VM, '_')
+
+    RETURN
+*-------------------------------------------------------------------------------
+FINALISE:
+
+    OPENSEQ '&HOLD&',outf TO F.OUTP ELSE
+        CREATE F.OUTP THEN
+            WRITESEQ 'object,property,value,checkpoint,remark' TO F.OUTP ELSE NULL
+        END
+    END
+
+    outpCount = DCOUNT(outp, @FM)
+    FOR i = 1 TO outpCount
+        WRITESEQ outp<i> APPEND TO F.OUTP ELSE NULL
+    NEXT i
+
+    WEOFSEQ F.OUTP
+    CLOSESEQ F.OUTP
+
+    PRINT "Elapsed time: ": TIME() - startTime
+
+    RETURN
+*-------------------------------------------------------------------------------
+ERR.HANDLER:
+
+    PRINT curApp:': ':ERR
+    IF NOT(svt) THEN outp<-1> = curApp:',ERROR,':ERR:otail
+
+    RETURN
+*************************************************************************
+END
