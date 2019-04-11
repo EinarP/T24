@@ -1,5 +1,5 @@
 *-----------------------------------------------------------------------------
-* <Rating>516</Rating>
+* <Rating>286</Rating>
 *-----------------------------------------------------------------------------
     PROGRAM T24DMP
 *-----------------------------------------------------------------------------
@@ -11,61 +11,40 @@
     $INSERT I_F.LOCAL.REF.TABLE
     $INSERT I_F.LOCAL.TABLE
 
-    ret_msg = ''
+    ret_msg = ''; fsep = CHARX(9)
 
-    file_name = SENTENCE(1); sample_size = SENTENCE(2); sample_type = ''
-    GOSUB parseArguments
-    IF ret_msg THEN GOSUB errorHandler
+    file_name = SENTENCE(1); file_p = ''; app_name = ''
+    GOSUB loadFiles 
+    IF NOT(ret_msg) THEN
 
-    file_p = ''; app_name = ''
-    GOSUB openFiles
-    IF ret_msg THEN GOSUB errorHandler
+        sample_spec = SENTENCE(2); rows = ''; n_rows = 0
+        GOSUB selectRecords
+        IF NOT(ret_msg) THEN
 
-    header = '@ID'
-    local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
-    GOSUB fetchHeader
+            header = '@ID'
+            local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
+            GOSUB fetchHeader
 
-    rows = ''
-    GOSUB selectRecords
-    FOR r_idx = 1 TO n_rows
-        GOSUB fetchRow
-    NEXT r_idx
+            FOR r_idx = 1 TO n_rows
+                GOSUB fetchRow
+            NEXT r_idx
 
-    result = CHANGE(header, @FM, fsep):@FM:rows
-    GOSUB saveResult
-
-errorHandler:
+            result = CHANGE(header, @FM, fsep):@FM:rows
+            GOSUB saveResult
+        END
+    END
 
     PRINT ret_msg
 
     STOP
 *-----------------------------------------------------------------------------
-parseArguments:
+loadFiles:
 
 * File to be dumped (with company prefix) mandatory
     IF NOT(file_name) THEN
-        ret_msg = 'Usage: T24DMP FILE ((H|T|R)SAMPLE_SIZE)'
+        ret_msg = "Usage: T24DMP FILE (((H)N|RN|TN|'WITH CLAUSE')"
+        RETURN
     END
-
-* Number of records to dump (all if not specified) and how
-    IF sample_size AND NOT(sample_size*1) THEN
-        sample_type = sample_size[1,1]
-        IF sample_type MATCHES 'H':@VM:'T':@VM:'R' THEN
-            sample_size = sample_size[2,LEN(sample_size)-1]
-            IF NOT(sample_size*1) THEN
-                ret_msg = 'Sample size must be numeric'
-            END
-        END ELSE
-            ret_msg = 'Unknown sample type prefix'
-        END
-    END
-
-* TODO: Perhaps separators should be configurable as well
-    fsep = CHARX(9); vsep = '{v}'; ssep = '{s}'
-
-    RETURN
-*-----------------------------------------------------------------------------
-openFiles:
 
 * Validate the file name
     BEGIN CASE
@@ -77,35 +56,59 @@ openFiles:
         app_name = file_name[6,LEN(file_name)]
     CASE OTHERWISE
         ret_msg = file_name:' is not a valid file name'
+        RETURN
     END CASE
 
-* Attempt to open the file to be dumped and related files
-    IF NOT(ret_msg) THEN
-        CALL CHECK.ROUTINE.EXIST(app_name, routine_exists, ret_info)
-        IF routine_exists THEN
-            OPEN file_name TO file_p THEN
-                CALL LOAD.COMPANY(company)
-            END ELSE
-                ret_msg = 'File ':file_name:' does not exist'
-            END
+* Attempt to open the file to be dumped
+    CALL CHECK.ROUTINE.EXIST(app_name, routine_exists, ret_info)
+    IF routine_exists THEN
+        OPEN file_name TO file_p THEN
+            CALL LOAD.COMPANY(company)
         END ELSE
-            ret_msg = 'Application ':app_name:' does not exist'
+            ret_msg = 'File ':file_name:' does not exist'
         END
+    END ELSE
+        ret_msg = 'Application ':app_name:' does not exist'
     END
 
     RETURN
 *-----------------------------------------------------------------------------
 selectRecords:
 
-    CALL EB.READLIST('SSELECT ':file_name, rows, '', n_rows, '')
+* Number of records to dump (all if not specified) and how
+	sample_size = ''
+			
+    IF sample_spec THEN
+		IF sample_spec*1 THEN sample_spec = 'H':sample_spec
+    
+		BEGIN CASE
+        CASE sample_spec[1,1] MATCHES 'H':@VM:'T':@VM:'R'
+            sample_size = sample_spec[2,LEN(sample_spec)-1]
+            IF NOT(sample_size*1) THEN
+                ret_msg = 'Sample size must be numeric'
+            END
+			
+        CASE sample_spec[1,1] MATCHES "'":@VM:'"'
+            sample_spec = sample_size[2,LEN(sample_size)-2]
+
+        CASE OTHERWISE
+            ret_msg = 'Unknown sample spec'
+			RETURN
+        END CASE
+    END
+	
+* TODO: Select error handling in building record id list
+    selc = 'SSELECT ':file_name
+    IF sample_spec[1,4] EQ 'WITH' THEN selc := ' ':sample_spec
+    CALL EB.READLIST(selc, rows, '', n_rows, ret_code)
 
 * Subset to tail, random, or head (default) records if requested
     IF sample_size AND sample_size LT n_rows THEN
         BEGIN CASE
-        CASE sample_type EQ 'T'
+        CASE sample_spec EQ 'T'
             rows = rows[@FM,n_rows-sample_size,sample_size]
 
-        CASE sample_type EQ 'R'
+        CASE sample_spec EQ 'R'
             random_rows = ''
             FOR i = 1 TO sample_size
                 LOOP r_id = RND(n_rows) + 1 WHILE r_id MATCHES LOWER(random_rows) REPEAT
@@ -164,13 +167,13 @@ fetchHeader:
                     header<-1> = r_ss<SSL.SYS.FIELD.NAME,pos>
                 END
             END ELSE
-                usr_field_pos = f_idx
                 BREAK
             END
         END CASE
     NEXT f_idx
 
 * Add user field names
+    usr_field_pos = DCOUNT(header, @FM) + 1
     FOR i = 1 TO n_usr_field
         IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
             header<-1> = r_ss<SSL.USR.TYPE,i>:'_':r_ss<SSL.USR.FIELD.NAME,i>
@@ -202,13 +205,13 @@ fetchRow:
     FOR i = 1 TO n_usr_field
         IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
             CALL IDESC(file_name, r_id, r_app, r_ss<SSL.USR.FIELD.NAME,i>, idesc_val)
-            row<usr_field_pos+n_local_ref+usr_field_idx> = idesc_val
+            row<usr_field_pos+usr_field_idx> = idesc_val
             usr_field_idx++
         END
     NEXT i
 
-    rows<r_idx> = CHANGE(row, @FM, fsep)
-*    rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, vsep), @SM, ssep)
+* TODO: Perhaps separators should be arguments as well
+    rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, '{vm}'), @SM, '{sm}')
 
     RETURN
 *-----------------------------------------------------------------------------
