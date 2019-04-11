@@ -89,7 +89,7 @@ selectRecords:
             END
 
         CASE sample_spec[1,1] MATCHES "'":@VM:'"'
-            sample_spec = sample_size[2,LEN(sample_size)-2]
+            sample_spec = sample_spec[2,LEN(sample_spec)-2]
 
         CASE OTHERWISE
             ret_msg = 'Unknown sample spec'
