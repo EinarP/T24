@@ -1,5 +1,5 @@
 *-----------------------------------------------------------------------------
-* <Rating>536</Rating>
+* <Rating>588</Rating>
 *-----------------------------------------------------------------------------
     PROGRAM T24DMP
 *-----------------------------------------------------------------------------
@@ -59,10 +59,16 @@ loadFiles:
         RETURN
     END CASE
 
-* Attempt to open the file to be dumped
+* Attempt to open the file to be dumped and fetch its metadata
     CALL CHECK.ROUTINE.EXIST(app_name, routine_exists, ret_info)
     IF routine_exists THEN
         OPEN file_name TO file_p THEN
+            OPEN 'F.STANDARD.SELECTION' TO ss_p THEN
+                READ r_ss FROM ss_p,app_name THEN
+                    V$FUNCTION = 'XX'
+                    CALL @app_name
+                END
+            END
             CALL LOAD.COMPANY(company)
         END ELSE
             ret_msg = 'File ':file_name:' does not exist'
@@ -87,10 +93,8 @@ selectRecords:
             IF NOT(sample_size*1) THEN
                 ret_msg = 'Sample size must be numeric'
             END
-
         CASE sample_spec[1,1] MATCHES "'":@VM:'"'
             sample_spec = sample_spec[2,LEN(sample_spec)-2]
-
         CASE OTHERWISE
             ret_msg = 'Unknown sample spec'
             RETURN
@@ -107,7 +111,6 @@ selectRecords:
         BEGIN CASE
         CASE sample_spec[1,1] EQ 'T'
             rows = rows[@FM,n_rows-sample_size,sample_size]
-
         CASE sample_spec[1,1] EQ 'R'
             random_rows = ''
             FOR i = 1 TO sample_size
@@ -115,7 +118,6 @@ selectRecords:
                 random_rows<i> = rows<r_id>
             NEXT i
             rows = random_rows
-
         CASE OTHERWISE
             rows = rows[@FM,1,sample_size]
         END CASE
@@ -127,20 +129,11 @@ selectRecords:
 *-----------------------------------------------------------------------------
 fetchHeader:
 
-* System field names with multivalue prefixes from application (F array)
-    V$FUNCTION = 'XX'
-    CALL @app_name
-
-* Audit and user field names with multivalue prefixes from STANDARD.SELECTION
-    CALL GET.STANDARD.SELECTION.DETS(app_name, r_ss)
-    n_usr_field = DCOUNT(r_ss<SSL.USR.FIELD.NAME>,@VM)
-
 * Fetch system, local, and audit field names respectively
     FOR f_idx = 1 TO C$SYSDIM
         BEGIN CASE
         CASE F(f_idx) AND F(f_idx) NE 'XX.LOCAL.REF'
             header<-1> = F(f_idx)
-
         CASE F(f_idx) EQ 'XX.LOCAL.REF'
             OPEN 'F.LOCAL.REF.TABLE' TO lrt_p THEN
                 READ r_lrt FROM lrt_p,app_name THEN
@@ -158,7 +151,6 @@ fetchHeader:
                 END
             END
             local_ref_pos = f_idx
-
         CASE OTHERWISE
             LOCATE f_idx IN r_ss<SSL.SYS.FIELD.NO,1> SETTING pos THEN
                 IF r_ss<SSL.SYS.SINGLE.MULT,pos> EQ 'M' THEN
@@ -174,6 +166,7 @@ fetchHeader:
 
 * Add user field names
     usr_field_pos = DCOUNT(header, @FM) + 1
+    n_usr_field = DCOUNT(r_ss<SSL.USR.FIELD.NAME>,@VM)
     FOR i = 1 TO n_usr_field
         IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
             header<-1> = r_ss<SSL.USR.TYPE,i>:'_':r_ss<SSL.USR.FIELD.NAME,i>
