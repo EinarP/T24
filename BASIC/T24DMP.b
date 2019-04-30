@@ -13,11 +13,12 @@
 
     ret_msg = ''; fsep = CHARX(9)
 
-    file_name = SENTENCE(1); file_p = ''; app_name = ''
+    file_p = ''; app_name = ''; file_name = @SENTENCE[' ', 2, 1]
     GOSUB loadFiles
     IF NOT(ret_msg) THEN
 
-        sample_spec = SENTENCE(2); rows = ''; n_rows = 0
+        rows = ''; n_rows = 0
+        sample_spec = @SENTENCE[' ', 3, DCOUNT(@SENTENCE, ' ')]
         GOSUB selectRecords
         IF NOT(ret_msg) THEN
 
@@ -93,8 +94,8 @@ selectRecords:
             IF NOT(sample_size*1) THEN
                 ret_msg = 'Sample size must be numeric'
             END
-        CASE sample_spec[1,1] MATCHES "'":@VM:'"'
-            sample_spec = sample_spec[2,LEN(sample_spec)-2]
+        CASE sample_spec[1,4] MATCHES 'WITH'
+ 
         CASE OTHERWISE
             ret_msg = 'Unknown sample spec'
             RETURN
