@@ -43,7 +43,7 @@ loadFiles:
 
 * File to be dumped (with company prefix) mandatory
     IF NOT(file_name) THEN
-        ret_msg = "Usage: T24DMP FILE (((H)N|RN|TN|'WITH CLAUSE')"
+        ret_msg = "Usage: T24DMP FILE (((H)N|RN|TN|WITH CLAUSE)"
         RETURN
     END
 
