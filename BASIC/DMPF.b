@@ -1,7 +1,7 @@
 *-----------------------------------------------------------------------------
 * <Rating>588</Rating>
 *-----------------------------------------------------------------------------
-    PROGRAM T24DMP
+    PROGRAM DMPF
 *-----------------------------------------------------------------------------
 * Extracts T24 file contents with local and user fields
 *-----------------------------------------------------------------------------
@@ -43,7 +43,7 @@ loadFiles:
 
 * File to be dumped (with company prefix) mandatory
     IF NOT(file_name) THEN
-        ret_msg = "Usage: T24DMP FILE (((H)N|RN|TN|WITH CLAUSE)"
+        ret_msg = "Usage: ":@SENTENCE[' ', 1, 1]:" FILE (((H)N|RN|TN|WITH CLAUSE)"
         RETURN
     END
 
