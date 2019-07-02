@@ -225,7 +225,7 @@ saveResult:
 		OPEN t24_path TO outp_p THEN
 			outp_file = 'DMP_':file_name:'.txt'
 			WRITE result TO outp_p,outp_file
-			ret_msg = file_name:' dumped into ':t24_path:'\':outp_file:' (':n_rows:' records)'
+			ret_msg = file_name:' dumped into ':t24_path:' file ':outp_file:' (':n_rows:' records)'
 		END ELSE 
 			ret_msg = 'Unable to open ':t24_path
 		END
