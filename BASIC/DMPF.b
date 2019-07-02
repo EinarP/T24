@@ -1,9 +1,9 @@
 *-----------------------------------------------------------------------------
-* <Rating>588</Rating>
+* <Rating>X</Rating>
 *-----------------------------------------------------------------------------
     PROGRAM DMPF
 *-----------------------------------------------------------------------------
-* Extracts T24 file contents with local and user fields
+* Extracts T24 file contents with local and user fields (ultracompatible)
 *-----------------------------------------------------------------------------
     $INSERT I_COMMON
     $INSERT I_EQUATE
@@ -13,27 +13,28 @@
 
     ret_msg = ''; fsep = CHARX(9)
 
+* Try opening the file to be dumped and related files
     file_p = ''; app_name = ''; file_name = @SENTENCE[' ', 2, 1]
     GOSUB loadFiles
-    IF NOT(ret_msg) THEN
+    IF ret_msg THEN GOSUB endProgram
 
-        rows = ''; n_rows = 0
-        sample_spec = @SENTENCE[' ', 3, DCOUNT(@SENTENCE, ' ')]
-        GOSUB selectRecords
-        IF NOT(ret_msg) THEN
+* Select the records as specified
+    rows = ''; n_rows = 0
+    sample_spec = @SENTENCE[' ', 3, DCOUNT(@SENTENCE, ' ')]; sample_size = ''
+    GOSUB selectRecords
+    IF ret_msg THEN GOSUB endProgram
 
-            header = '@ID'
-            local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
-            GOSUB fetchHeader
+* Fetch core, local, and dynamic fields
+    header = '@ID'
+    local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
+    GOSUB fetchHeader
+    GOSUB fetchRows
 
-            FOR r_idx = 1 TO n_rows
-                GOSUB fetchRow
-            NEXT r_idx
+* Output fsep seperated file into root directory
+    result = CHANGE(header, @FM, fsep):@FM:rows
+    GOSUB saveResult
 
-            result = CHANGE(header, @FM, fsep):@FM:rows
-            GOSUB saveResult
-        END
-    END
+endProgram:
 
     PRINT ret_msg
 
@@ -41,18 +42,18 @@
 *-----------------------------------------------------------------------------
 loadFiles:
 
-* File to be dumped (with company prefix) mandatory
+* File to be dumped mandatory
     IF NOT(file_name) THEN
         ret_msg = "Usage: ":@SENTENCE[' ', 1, 1]:" FILE (((H)N|RN|TN|WITH CLAUSE)"
         RETURN
     END
 
-* Validate the file name
+* Validate the file name with company prefix
     BEGIN CASE
     CASE file_name[1,2] EQ 'F.'
         company = 'BNK'
         app_name = file_name[3,LEN(file_name)]
-    CASE file_name[1,5] MATCHES 'F3A.'
+    CASE LEN(file_name['.',1,1]) EQ 4 AND file_name[1,1] EQ 'F'
         company = file_name[2,3]
         app_name = file_name[6,LEN(file_name)]
     CASE OTHERWISE
@@ -60,31 +61,26 @@ loadFiles:
         RETURN
     END CASE
 
-* Attempt to open the file to be dumped and fetch its metadata
-    CALL CHECK.ROUTINE.EXIST(app_name, routine_exists, ret_info)
-    IF routine_exists THEN
-        OPEN file_name TO file_p THEN
-            OPEN 'F.STANDARD.SELECTION' TO ss_p THEN
-                READ r_ss FROM ss_p,app_name THEN
-                    V$FUNCTION = 'XX'
-                    CALL @app_name
-                END
-            END
-            CALL LOAD.COMPANY(company)
-        END ELSE
-            ret_msg = 'File ':file_name:' does not exist'
-        END
-    END ELSE
-        ret_msg = 'Application ':app_name:' does not exist'
+* Attempt to open the file to be dumped and fetch its metadata	
+    OPEN file_name TO file_p THEN
+        OPEN 'F.STANDARD.SELECTION' TO ss_p THEN
+            READ r_ss FROM ss_p,app_name THEN
+                V$FUNCTION = 'XX'
+                CALL @app_name
+				CALL LOAD.COMPANY(company)
+            END ELSE
+				ret_msg = 'File not in STANDARD.SELECTION'
+			END
+		END
+     END ELSE
+        ret_msg = 'File ':file_name:' does not exist'
     END
 
     RETURN
 *-----------------------------------------------------------------------------
 selectRecords:
 
-* Number of records to dump (all if not specified) and how
-    sample_size = ''
-
+* Restrict output rows if requested
     IF sample_spec THEN
         IF sample_spec*1 THEN sample_spec = 'H':sample_spec
 
@@ -93,6 +89,7 @@ selectRecords:
             sample_size = sample_spec[2,LEN(sample_spec)-1]
             IF NOT(sample_size*1) THEN
                 ret_msg = 'Sample size must be numeric'
+				RETURN
             END
         CASE sample_spec[1,4] MATCHES 'WITH'
  
@@ -102,10 +99,20 @@ selectRecords:
         END CASE
     END
 
-* TODO: Select error handling in building record id list
+* Select records
     selc = 'SSELECT ':file_name
     IF sample_spec[1,4] EQ 'WITH' THEN selc := ' ':sample_spec
-    CALL EB.READLIST(selc, rows, '', n_rows, ret_code)
+	
+    EXECUTE selc SETTING exec_msg CAPTURING exec_outp
+    IF NOT(@SYSTEM.RETURN.CODE) THEN
+		IF exec_msg<1,3> NE 'QLNUMESL' AND exec_msg<1,2> NE 'QLNONSEL' THEN
+            ret_msg = 'Incorrect SELECT statement'
+			RETURN
+        END
+    END
+
+	READLIST rows ELSE rows = ''
+	n_rows = @SELECTED
 
 * Subset to tail, random, or head (default) records if requested
     IF sample_size AND sample_size LT n_rows THEN
@@ -176,47 +183,54 @@ fetchHeader:
 
     RETURN
 *-----------------------------------------------------------------------------
-fetchRow:
-
-    r_id = rows<r_idx>
+fetchRows:
+	
+* Fetch all the selected records
+    FOR r_idx = 1 TO n_rows
+		r_id = rows<r_idx>
 
 * Fetch system fields
-    READ r_app FROM file_p,r_id THEN
-        row = r_id:@FM:r_app
-    END
+		READ r_app FROM file_p,r_id THEN
+			row = r_id:@FM:r_app
+		END
 
 * Fetch local ref fields (not all values might have been populated)
-    IF local_ref_pos THEN
-        local_ref_fields = ''
-        FOR i = 1 TO n_local_ref
-            local_ref_fields<i> = r_app<local_ref_pos,i>
-        NEXT i
-        row<local_ref_pos+1> = local_ref_fields
-    END
+		IF local_ref_pos THEN
+			local_ref_fields = ''
+			FOR i = 1 TO n_local_ref
+				local_ref_fields<i> = r_app<local_ref_pos,i>
+			NEXT i
+			row<local_ref_pos+1> = local_ref_fields
+		END
 
 * Fetch user fields
-    usr_field_idx = 0
-    FOR i = 1 TO n_usr_field
-        IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
-            CALL IDESC(file_name, r_id, r_app, r_ss<SSL.USR.FIELD.NAME,i>, idesc_val)
-            row<usr_field_pos+usr_field_idx> = idesc_val
-            usr_field_idx++
-        END
-    NEXT i
+		usr_field_idx = 0
+		FOR i = 1 TO n_usr_field
+			IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
+				CALL IDESC(file_name, r_id, r_app, r_ss<SSL.USR.FIELD.NAME,i>, idesc_val)
+				row<usr_field_pos+usr_field_idx> = idesc_val
+				usr_field_idx++
+			END
+		NEXT i
 
-* TODO: Perhaps separators should be arguments as well
-    rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, '{vm}'), @SM, '{sm}')
+* TODO: Perhaps the separators should be arguments as well
+		rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, '{vm}'), @SM, '{sm}')
+	NEXT r_idx
 
     RETURN
 *-----------------------------------------------------------------------------
 saveResult:
 
-    OPEN '&SAVEDLISTS&' TO sl_p THEN
-        outp_file = 'TAD_':file_name:'.txt'
-        WRITE result TO sl_p,outp_file
-        ret_msg = file_name:' dumped into &SAVEDLISTS&/':outp_file:' (':n_rows:' records)'
-    END ELSE
-        ret_msg = 'Unable to output into &SAVEDLISTS&'
-    END
+	IF GETENV ('T24_HOME', t24_path) THEN
+		OPEN t24_path TO outp_p THEN
+			outp_file = 'DMP_':file_name:'.txt'
+			WRITE result TO outp_p,outp_file
+			ret_msg = file_name:' dumped into ':t24_path:'\':outp_file:' (':n_rows:' records)'
+		END ELSE 
+			ret_msg = 'Unable to open ':t24_path
+		END
+	END ELSE
+		ret_msg = 'T24_HOME environment variable not set'
+	END 
 
     RETURN
