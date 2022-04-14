@@ -1,7 +1,7 @@
 *-----------------------------------------------------------------------------
 * <Rating>X</Rating>
 *-----------------------------------------------------------------------------
-    PROGRAM DMPF
+    PROGRAM EPDMP
 *-----------------------------------------------------------------------------
 * Extracts T24 file contents with local and user fields (ultracompatible)
 *-----------------------------------------------------------------------------
@@ -30,13 +30,12 @@
     GOSUB fetchHeader
     GOSUB fetchRows
 
-* Output fsep seperated file into root directory
-    result = CHANGE(header, @FM, fsep):@FM:rows
-    GOSUB saveResult
+* Output the result
+    ret_msg = CHANGE(header, @FM, fsep)
+	IF rows THEN ret_msg = CHANGE(ret_msg:@FM:rows, @FM, CHARX(10))
 
 endProgram:
-
-    PRINT ret_msg
+    CRT ret_msg
 
     STOP
 *-----------------------------------------------------------------------------
@@ -216,21 +215,5 @@ fetchRows:
 * TODO: Perhaps the separators should be arguments as well
         rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, '{vm}'), @SM, '{sm}')
     NEXT r_idx
-
-    RETURN
-*-----------------------------------------------------------------------------
-saveResult:
-
-    IF GETENV('T24_HOME', t24_path) THEN
-        OPEN t24_path TO outp_p THEN
-            outp_file = 'DMP_':file_name:'.txt'
-            WRITE result TO outp_p,outp_file
-            ret_msg = n_rows:' record(s) dumped into ':t24_path:' file ':outp_file
-        END ELSE 
-            ret_msg = 'Unable to open ':t24_path
-        END
-    END ELSE
-        ret_msg = 'T24_HOME environment variable not set'
-    END 
 
     RETURN
