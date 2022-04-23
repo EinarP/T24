@@ -25,17 +25,9 @@
     IF ret_msg THEN GOSUB endProgram
 
 * Fetch core, local, and dynamic fields
-    header = '@ID'
     local_ref_pos = 0; n_local_ref = 0; usr_field_pos = 0; n_usr_field = 0
     GOSUB fetchHeader
     GOSUB fetchRows
-
-* Output the result
-    ret_msg = CHANGE(header, @FM, fsep)
-	IF rows THEN ret_msg = CHANGE(ret_msg:@FM:rows, @FM, CHARX(10))
-
-endProgram:
-    CRT ret_msg
 
     STOP
 *-----------------------------------------------------------------------------
@@ -136,6 +128,8 @@ selectRecords:
 *-----------------------------------------------------------------------------
 fetchHeader:
 
+    header = '@ID'
+
 * Fetch system, local, and audit field names respectively
     FOR f_idx = 1 TO C$SYSDIM
         BEGIN CASE
@@ -180,11 +174,14 @@ fetchHeader:
         END
     NEXT i
 
+* Output the header
+    CRT CHANGE(header, @FM, fsep)
+	
     RETURN
 *-----------------------------------------------------------------------------
 fetchRows:
     
-* Fetch all the selected records
+* Fetch all selected records
     FOR r_idx = 1 TO n_rows
         r_id = rows<r_idx>
 
@@ -212,8 +209,14 @@ fetchRows:
             END
         NEXT i
 
-* TODO: Perhaps the separators should be arguments as well
-        rows<r_idx> = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, '{vm}'), @SM, '{sm}')
+* Output a row (TODO: Perhaps the separators should be arguments as well)
+        CRT CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, '{vm}'), @SM, '{sm}')
     NEXT r_idx
 
     RETURN
+*-----------------------------------------------------------------------------
+endProgram:
+
+    CRT ret_msg
+
+    END
