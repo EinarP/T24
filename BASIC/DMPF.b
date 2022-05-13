@@ -34,11 +34,10 @@
     local_ref_pos = 0 ; n_local_ref = 0 ; usr_field_pos = 0 ; n_usr_field = 0
     GOSUB fetchHeader
     IF sample_spec EQ 'S' THEN
-        CRT @SELECTED:" rows x ":n_cols:" columns"
         GOSUB fetchRows
-        GOSUB fetchRowsSummary
+        GOSUB displaySummary
     END ELSE
-        CRT CHANGE(FIELDS(header, '%', 1, 1), @FM, fsep)
+        IF header THEN CRT CHANGE(FIELDS(header, '%', 1, 1), @FM, fsep)
         GOSUB fetchRows
     END
 
@@ -114,17 +113,7 @@ loadFiles:
                     CRT r_pf<EB.PGM.SCREEN.TITLE,1>
                 END
             END
-        END
-                    
-        OPEN 'F.STANDARD.SELECTION' TO ss_p THEN
-            READ r_ss FROM ss_p,app_name THEN
-                V$FUNCTION = 'XX'
-                CALL @app_name
-                CALL LOAD.COMPANY(company)
-            END ELSE
-                ret_msg = 'File not in STANDARD.SELECTION'
-            END
-        END
+        END                    
     END ELSE
         ret_msg = 'File ':file_name:' does not exist'
     END
@@ -139,10 +128,9 @@ selectRecords:
         
         LOOP
             READNEXT recid ELSE recid = ''
-        WHILE recid <> ''
+        WHILE recid NE '' AND n_rows LT sample_size
             rows<-1> = recid
             n_rows++
-            IF n_rows EQ sample_size THEN EXIT
         REPEAT
 
 * Select all records corresponding to criteria
@@ -181,6 +169,17 @@ selectRecords:
     RETURN
 *-----------------------------------------------------------------------------
 fetchHeader:
+
+* Build header from STANDARD.SELECTION record if possible
+    OPEN 'F.STANDARD.SELECTION' TO ss_p THEN
+        READ r_ss FROM ss_p,app_name THEN
+            V$FUNCTION = 'XX'
+            CALL @app_name
+            CALL LOAD.COMPANY(company)
+        END ELSE
+            RETURN
+        END
+    END
 
 * Fetch system, local, and audit field names respectively
     FOR f_idx = 0 TO C$SYSDIM
@@ -229,12 +228,11 @@ fetchHeader:
     FOR i = 1 TO n_usr_field
         IF LEFT(r_ss<SSL.USR.FIELD.NO,i>,10) NE 'LOCAL.REF<' THEN
             col_name = r_ss<SSL.USR.TYPE,i>:'_':r_ss<SSL.USR.FIELD.NAME,i>
-            col_type = ''
+            ffmt = r_ss<SSL.USR.DISPLAY.FMT,i>
+            col_type = ffmt[1,LEN(ffmt)-1]:FIELD(r_ss<SSL.USR.VAL.PROG,i>['IN2',2,1], '&', 1, 1)
             header<-1> = col_name:'%':col_type
         END
     NEXT i
-
-    n_cols = DCOUNT(header, @FM)
     
     RETURN
 *-----------------------------------------------------------------------------
@@ -256,7 +254,6 @@ fetchRows:
                 local_ref_fields<i> = r_app<local_ref_pos,i>
             NEXT i
             row<local_ref_pos+1> = local_ref_fields
-*           INS local_ref_fields BEFORE rows
         END
 
 * Fetch user fields
@@ -280,14 +277,30 @@ fetchRows:
 
     RETURN
 *-----------------------------------------------------------------------------
-fetchRowsSummary:
+displaySummary:
 
-    col_max_len = MAXIMUM(LENS(header))
+* Build header from rows if no STANDARD.SELECTION available
+    IF header THEN
+        n_cols = DCOUNT(header, @FM)
+    END ELSE
+        n_cols = MAXIMUM(COUNTS(rows, fsep)) + 1
+        
+        col_type = 'tbd'
+        header = 'RECID%':col_type
+        FOR idx = 1 TO n_cols - 1
+            header<-1> = 'F':idx:'%':col_type
+        NEXT idx
+    END
+    CRT @SELECTED:" rows x ":n_cols:" columns"      
 
+* Space allocated for column description    
+    col_max_len = MAXIMUM(LENS(header)) + 6
+
+* Output column descriptions and row samples    
     FOR c_idx = 1 TO n_cols
         col_no_name = FMT(c_idx, 'R*3'):' ':header<c_idx>['%',1,1]
         col_type = '<':header<c_idx>['%',2,1]:'>'
-        col_space = SPACE(col_max_len + 6 - LEN(col_no_name) - LEN(col_type))
+        col_space = SPACE(col_max_len - LEN(col_no_name) - LEN(col_type))
 
         vals = FIELDS(rows, fsep, c_idx, 1)
         
