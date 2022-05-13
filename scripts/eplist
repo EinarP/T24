@@ -1,0 +1,10 @@
+#!/usr/bin/bash
+
+if [ -z "$2" ]
+then
+    cut_args="-f1-10"
+else
+    cut_args=$2
+fi
+
+tRun EPDMP $1 | cut $cut_args | column -t -s $'\t'
