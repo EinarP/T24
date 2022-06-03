@@ -14,18 +14,19 @@
 
 * Parse arguments and instruct the user in case of no success
     app_arg = @SENTENCE[' ',1,1]    
-    ret_msg = "Try ":app_arg:" (-(h<ead>|t<ail>|r<andom>|s<ummary>)(N)) FILE (WITH CLAUSE)" 
+    ret_msg = "Try ":app_arg:" (-(h<ead>|t<ail>|r<andom>|s<ummary>)(N)) FILE (WITH CLAUSE)"
+	
     sample_spec = '' ; sample_size = '' ; file_name = '' ; with_clause = ''
     GOSUB parseArgs
     IF ret_msg THEN GOSUB endProgram
 
 * Try opening the file to be dumped and related files
-    file_p = '' ; app_name = ''
+    app_name = file_name ; company = 'BNK' ; file_p = ''
     GOSUB loadFiles
     IF ret_msg THEN GOSUB endProgram
 
 * Select the records as specified
-    rows = '' ; n_rows = 0
+    rows = '' ; n_rows_selected = 0 ; n_rows = 0
     GOSUB selectRecords
     IF ret_msg THEN GOSUB endProgram
 
@@ -33,6 +34,7 @@
     header = '' ; n_cols = 0 ; fsep = CHARX(9)
     local_ref_pos = 0 ; n_local_ref = 0 ; usr_field_pos = 0 ; n_usr_field = 0
     GOSUB fetchHeader
+	
     IF sample_spec EQ 'S' THEN
         GOSUB fetchRows
         GOSUB displaySummary
@@ -53,16 +55,14 @@ parseArgs:
         
         sample_spec = option_arg[1,1]
         IF sample_spec[1,1] MATCHES 'H':@VM:'T':@VM:'R':@VM:'S' ELSE
-            CRT app_arg:": Unknown option '":option_arg:"'."
+            CRT app_arg:": Unknown option '":option_arg:"'"
             RETURN
         END
         
         sample_size = option_arg[2,LEN(option_arg)-1]
-        IF sample_size THEN
-            IF sample_size*1 ELSE
-                CRT app_arg:": Sample size '":sample_size:"' not numeric."
-                RETURN
-            END
+        IF sample_size AND NOT(sample_size*1) THEN
+            CRT app_arg:": Sample size '":sample_size:"' not numeric"
+            RETURN
         END ELSE
             sample_size = 6
         END
@@ -73,17 +73,21 @@ parseArgs:
 * File to be dumped mandatory
     file_name = @SENTENCE[' ',arg_pos,1]
     IF file_name ELSE
-        CRT app_arg:": FILE not specified."
+        CRT app_arg:": FILE not specified"
         RETURN
     END
 
-* Record selection criteria may be provided
+* Record selection criteria might be provided
     arg_pos++
     with_clause = @SENTENCE[' ',arg_pos,DCOUNT(@SENTENCE, ' ')]
-    IF with_clause AND with_clause[1,4] NE 'WITH' THEN
-        CRT app_arg:": Incorrect selection criteria '":with_clause:"'."
+    BEGIN CASE
+    CASE NOT(with_clause) OR with_clause[1,4] EQ 'WITH'
+    CASE with_clause[1,4] EQ 'LIKE'
+        with_clause = 'WITH @ID ':with_clause
+    CASE OTHERWISE
+        CRT app_arg:": Incorrect selection criteria '":with_clause:"'"
         RETURN
-    END
+    END CASE
     
 * Arguments successfully parsed, return no instructions
     ret_msg = ''
@@ -95,14 +99,10 @@ loadFiles:
 * Validate the file name with company prefix
     BEGIN CASE
     CASE file_name[1,2] EQ 'F.'
-        company = 'BNK'
         app_name = FIELD(file_name[3,LEN(file_name)], '$', 1, 1)
     CASE LEN(file_name['.',1,1]) EQ 4 AND file_name[1,1] EQ 'F'
         company = file_name[2,3]
         app_name = FIELD(file_name[6,LEN(file_name)], '$', 1, 1)
-    CASE OTHERWISE
-        ret_msg = file_name:' is not a valid file name'
-        RETURN
     END CASE
 
 * Attempt to open the file to be dumped and fetch its metadata  
@@ -115,7 +115,7 @@ loadFiles:
             END
         END                    
     END ELSE
-        ret_msg = 'File ':file_name:' does not exist'
+        ret_msg = app_arg:': File ':file_name:' does not exist'
     END
 
     RETURN
@@ -138,16 +138,15 @@ selectRecords:
         selc = 'SSELECT ':file_name
         IF with_clause THEN selc := ' ':with_clause
         EXECUTE selc SETTING exec_msg CAPTURING exec_outp
-        IF NOT(@SYSTEM.RETURN.CODE) THEN
-            IF exec_msg<1,3> NE 'QLNUMESL' AND exec_msg<1,2> NE 'QLNONSEL' THEN
-                ret_msg = "Incorrect SELECT statement '":selc:"'"
-                RETURN
-            END
+        IF exec_outp<1,1> THEN
+            ret_msg = app_arg:": SELECT error '":CHANGE(exec_outp<1,1>, CHARX(10), ''):"'"
+            RETURN
         END
+        n_rows_selected = @SELECTED
+        
         READLIST rows ELSE rows = ''
-
-        n_rows = @SELECTED
-        IF sample_size AND sample_size LT n_rows THEN
+        
+        IF sample_size AND sample_size LT n_rows_selected THEN
             BEGIN CASE
             CASE sample_spec[1,1] EQ 'T'
                 rows = rows[@FM,n_rows-sample_size,sample_size]
@@ -163,6 +162,8 @@ selectRecords:
             END CASE
 
             n_rows = sample_size
+        END ELSE
+            n_rows = n_rows_selected
         END
     END
 
@@ -266,8 +267,10 @@ fetchRows:
             END
         NEXT i
 
-* Output a row (TODO: Perhaps the separators should be arguments as well)
-        row = CHANGE(CHANGE(CHANGE(row, @FM, fsep), @VM, '\\'), @SM, '\')
+* Output a row
+        row = CHANGE(CHANGE(row, CHARX(10), ' '), CHARX(13), ' ')
+        row = CHANGE(CHANGE(row, @VM, '\\'), @SM, '\')
+        row = CHANGE(row, @FM, fsep)
         IF sample_spec EQ 'S' THEN
             rows<r_idx> = row
         END ELSE
@@ -291,7 +294,7 @@ displaySummary:
             header<-1> = 'F':idx:'%':col_type
         NEXT idx
     END
-    CRT @SELECTED:" rows x ":n_cols:" columns"      
+    CRT n_rows_selected:" rows x ":n_cols:" columns"      
 
 * Space allocated for column description    
     col_max_len = MAXIMUM(LENS(header)) + 6
