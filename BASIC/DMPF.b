@@ -14,9 +14,9 @@
 
 * Parse arguments and instruct the user in case of no success
     app_arg = @SENTENCE[' ',1,1]    
-    ret_msg = "Try ":app_arg:" (-(h<ead>|t<ail>|r<andom>|s<ummary>)(N)) FILE (WITH CLAUSE)"
+    ret_msg = "Try ":app_arg:" (-(h<ead>|r<andom>|t<ail>)|s<ummary>)(N)) FILE (WITH|LIKE CLAUSE)"
 	
-    sample_spec = '' ; sample_size = '' ; file_name = '' ; with_clause = ''
+    outp_spec = '' ; sample_spec = '' ; sample_size = '' ; file_name = '' ; with_clause = ''
     GOSUB parseArgs
     IF ret_msg THEN GOSUB endProgram
 
@@ -35,7 +35,7 @@
     local_ref_pos = 0 ; n_local_ref = 0 ; usr_field_pos = 0 ; n_usr_field = 0
     GOSUB fetchHeader
 	
-    IF sample_spec EQ 'S' THEN
+    IF outp_spec EQ 'SUMMARY' THEN
         GOSUB fetchRows
         GOSUB displaySummary
     END ELSE
@@ -54,10 +54,15 @@ parseArgs:
         IF option_arg*1 THEN option_arg = 'H':option_arg
         
         sample_spec = option_arg[1,1]
-        IF sample_spec[1,1] MATCHES 'H':@VM:'T':@VM:'R':@VM:'S' ELSE
+        IF sample_spec[1,1] MATCHES 'H':@VM:'T':@VM:'R':@VM:'S':@VM:'Z' ELSE
             CRT app_arg:": Unknown option '":option_arg:"'"
             RETURN
         END
+
+* TODO: Undocumented option 'z' to be replaced with 'hs' handling
+		IF sample_spec MATCHES 'S':@VM:'Z' THEN
+			outp_spec = 'SUMMARY'
+		END
         
         sample_size = option_arg[2,LEN(option_arg)-1]
         IF sample_size AND NOT(sample_size*1) THEN
@@ -73,7 +78,7 @@ parseArgs:
 * File to be dumped mandatory
     file_name = @SENTENCE[' ',arg_pos,1]
     IF file_name ELSE
-        CRT app_arg:": FILE not specified"
+        CRT app_arg:": FILE argument missing"
         RETURN
     END
 
@@ -107,7 +112,7 @@ loadFiles:
 
 * Attempt to open the file to be dumped and fetch its metadata  
     OPEN file_name TO file_p THEN
-        IF sample_spec EQ 'S' THEN
+        IF outp_spec EQ 'SUMMARY' THEN
             OPEN 'F.PGM.FILE' TO pf_p THEN
                 READ r_pf FROM pf_p,app_name THEN
                     CRT r_pf<EB.PGM.SCREEN.TITLE,1>
@@ -123,7 +128,7 @@ loadFiles:
 selectRecords:
 
 * Select quick sample of records if possible
-    IF sample_spec MATCHES 'H' AND NOT(with_clause) THEN
+    IF sample_spec MATCHES 'H':@VM:'Z' AND NOT(with_clause) THEN
         SELECT file_p
         
         LOOP
@@ -271,7 +276,7 @@ fetchRows:
         row = CHANGE(CHANGE(row, CHARX(10), ' '), CHARX(13), ' ')
         row = CHANGE(CHANGE(row, @VM, '\\'), @SM, '\')
         row = CHANGE(row, @FM, fsep)
-        IF sample_spec EQ 'S' THEN
+        IF outp_spec EQ 'SUMMARY' THEN
             rows<r_idx> = row
         END ELSE
             CRT row
