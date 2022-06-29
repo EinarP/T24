@@ -137,7 +137,7 @@ loadFiles:
 *-----------------------------------------------------------------------------
 selectRecords:
 
-* Select quick sample of records if possible
+* Select either a quick sample or all records corresponding to criteria
     IF sample_spec EQ 'H' AND NOT(with_clause) THEN
         SELECT file_p
         
@@ -147,8 +147,8 @@ selectRecords:
             rows<-1> = recid
             n_rows++
         REPEAT
-
-* Select all records corresponding to criteria
+		
+		n_rows_selected = n_rows
     END ELSE
         selc = 'SSELECT ':file_name
         IF with_clause THEN selc := ' ':with_clause
@@ -309,12 +309,12 @@ displaySummary:
             header<-1> = 'F':idx:'%':col_type
         NEXT idx
     END
-	
-	IF sample_spec EQ 'H' THEN
-		CRT "First ":sample_size:" rows x ":n_cols:" columns"
-	END ELSE
-		CRT n_rows_selected:" rows x ":n_cols:" columns"
-	END
+    
+    IF sample_spec EQ 'H' AND n_rows EQ sample_size THEN
+        CRT "FIRST ":sample_size:" rows x ":n_cols:" columns"
+    END ELSE
+        CRT n_rows_selected:" rows x ":n_cols:" columns"
+    END
 
 * Space allocated for column description    
     col_max_len = MAXIMUM(LENS(header)) + 6
