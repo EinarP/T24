@@ -1,7 +1,5 @@
 *-----------------------------------------------------------------------------
-* <Rating>XXX</Rating>
-*-----------------------------------------------------------------------------
-    PROGRAM EPDMP
+    PROGRAM DMPF
 *-----------------------------------------------------------------------------
 * Einar's little data extraction tool
 *-----------------------------------------------------------------------------
@@ -137,7 +135,7 @@ loadFiles:
 *-----------------------------------------------------------------------------
 selectRecords:
 
-* Select either a quick sample or all records corresponding to criteria
+* Select quick sample of records if possible
     IF sample_spec EQ 'H' AND NOT(with_clause) THEN
         SELECT file_p
         
@@ -148,7 +146,7 @@ selectRecords:
             n_rows++
         REPEAT
 		
-		n_rows_selected = n_rows
+* Select all records corresponding to criteria
     END ELSE
         selc = 'SSELECT ':file_name
         IF with_clause THEN selc := ' ':with_clause
@@ -310,8 +308,8 @@ displaySummary:
         NEXT idx
     END
     
-    IF sample_spec EQ 'H' AND n_rows EQ sample_size THEN
-        CRT "FIRST ":sample_size:" rows x ":n_cols:" columns"
+    IF sample_spec EQ 'H' THEN
+        CRT "FIRST "First ":sample_size:" rows x ":n_cols:" columns"
     END ELSE
         CRT n_rows_selected:" rows x ":n_cols:" columns"
     END
