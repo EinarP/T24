@@ -309,7 +309,7 @@ displaySummary:
     END
     
     IF sample_spec EQ 'H' THEN
-        CRT "FIRST "First ":sample_size:" rows x ":n_cols:" columns"
+        CRT "First ":sample_size:" rows x ":n_cols:" columns"
     END ELSE
         CRT n_rows_selected:" rows x ":n_cols:" columns"
     END
